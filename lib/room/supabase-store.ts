@@ -39,6 +39,11 @@ export const supabaseStore: RoomStore = {
   async audits(id) { return (ok(await db().from("sheet_audit").select("data").eq("room_id", id).order("created_at")) as { data: SheetAudit }[]).map((r) => r.data); },
   async flags(id) { return (ok(await db().from("security_flags").select("data").eq("room_id", id).order("created_at")) as { data: SecurityFlag }[]).map((r) => r.data); },
   async logFlag(id, flag) { ok(await db().from("security_flags").insert({ id: flag.id, room_id: id, data: flag })); },
+  async touch(id, memberId, idle) { ok(await db().from("room_members").update({ last_seen: new Date().toISOString(), idle }).eq("room_id", id).eq("member_id", memberId)); },
+  async presence(id) {
+    const rows = ok(await db().from("room_members").select("member_id, last_seen, idle").eq("room_id", id)) as { member_id: string; last_seen: string | null; idle: boolean }[];
+    return Object.fromEntries(rows.filter((r) => r.last_seen).map((r) => [r.member_id, { at: new Date(r.last_seen!).getTime(), idle: r.idle }]));
+  },
   async publish(state, events) {
     const messages = events.flatMap((e) => topicsFor(state, e.audience).map((topic) => ({ topic, event: "room", payload: e, private: false })));
     if (!messages.length) return;

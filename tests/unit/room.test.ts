@@ -5,7 +5,8 @@ import { redactFor } from "@/lib/room/redact";
 import { handleIntent, memoryStore as store } from "@/lib/room/store";
 import { reaches, visibleChat, visibleRoll } from "@/lib/room/server";
 import { RuleError, type Character } from "@/lib/rules";
-import type { Intent, RoomEvent, RoomState } from "@/lib/room/types";
+import { intentSchema, type Intent, type RoomEvent, type RoomState } from "@/lib/room/types";
+import spells from "@/data/srd/spells.json";
 import { fixtures } from "../fixtures/characters";
 
 const fighter = fixtures.find((f) => f.name === "Fighter 5")!.character;
@@ -427,5 +428,123 @@ describe("room management", () => {
   it("rejects a character with unknown data", async () => {
     const r = await room();
     expect((await r.act(r.p1, { type: "set_character", character: { ...fighter, classes: [{ classId: "fake", level: 1 }] } })).ok).toBe(false);
+  });
+});
+
+describe("monster attacks and reactions", () => {
+  const setup = () => {
+    let s = addMember(createRoom("r", "T", "AAAAAA", "D", "dm", 1), { id: "p", name: "P", role: "player", now: 1 });
+    s = applyIntent(s, "p", { type: "set_character", character: fighter }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "approve_character", memberId: "p", approved: true }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "token_add", name: "Goblin", x: 2, y: 1, hp: 7, ac: 15 }, ctx()).state;
+    return { s, hero: s.tokens.find((t) => t.memberId)!, gob: s.tokens.find((t) => !t.memberId)! };
+  };
+  const swing = (s: RoomState, gobId: string, heroId: string, dice: number[]) => applyIntent(s, "dm", { type: "monster_attack", requestId: "a", tokenId: gobId, targetTokenId: heroId, name: "Scimitar", toHit: 4, damage: "1d6+2", damageType: "slashing", visibility: "public" }, ctx(dice));
+
+  it("compares against the character's real AC and applies damage to the sheet", () => {
+    const { s, hero, gob } = setup(); // AC 17, 44 HP
+    const hit = swing(s, gob.id, hero.id, [13, 3]);
+    expect(hit.state.seats.p.session.hp).toBe(39);
+    const miss = swing(s, gob.id, hero.id, [12]);
+    expect(miss.rolls).toHaveLength(1);
+    expect(miss.state.seats.p.session.hp).toBe(44);
+  });
+  it("prompts the right player to react, privately", () => {
+    const { s, hero, gob } = setup();
+    const out = swing(s, gob.id, hero.id, [12]);
+    const prompt = out.events.find((e) => e.type === "reaction.prompt")!;
+    expect(prompt.audience).toEqual({ kind: "members", ids: ["p"] });
+    expect(prompt.payload.text).toBe("Goblin missed you with Scimitar. Use your Reaction?");
+    expect(redactFor(out.state, "p")!.reactions).toHaveLength(1);
+    expect(redactFor(out.state, "dm")!.reactions).toHaveLength(0);
+  });
+  it("doesn't prompt someone who can't react", () => {
+    const { s, hero, gob } = setup();
+    const stunned = applyIntent(s, "dm", { type: "session_change", memberId: "p", change: { kind: "condition", id: "stunned", on: true } }, ctx()).state;
+    expect(swing(stunned, gob.id, hero.id, [12]).events.map((e) => e.type)).not.toContain("reaction.prompt");
+  });
+  it("offers an Opportunity Attack when leaving reach, only during combat", () => {
+    const { s, hero } = setup(); // hero at (1,1), goblin at (2,1): adjacent
+    const noCombat = applyIntent(s, "p", { type: "token_move", id: hero.id, x: 1, y: 9 }, ctx());
+    expect(noCombat.events.map((e) => e.type)).not.toContain("reaction.prompt");
+    const inCombat = applyIntent(applyIntent(s, "dm", { type: "start_combat" }, ctx()).state, "p", { type: "token_move", id: hero.id, x: 1, y: 9 }, ctx());
+    const prompt = inCombat.events.find((e) => e.type === "reaction.prompt")!;
+    expect(prompt.audience).toEqual({ kind: "members", ids: ["dm"] });
+    expect(prompt.payload.text).toContain("Opportunity Attack");
+  });
+  it("only lets the prompted player answer", () => {
+    const { s, hero, gob } = setup();
+    const out = swing(s, gob.id, hero.id, [12]);
+    const id = out.state.reactions[0].id;
+    expect(() => applyIntent(out.state, "dm", { type: "reaction_answer", id, use: true }, ctx())).toThrow(RuleError);
+    expect(applyIntent(out.state, "p", { type: "reaction_answer", id, use: true }, ctx()).events[0].type).toBe("reaction.used");
+  });
+});
+
+describe("any legal character can sit at the table", () => {
+  it.each(fixtures.map((f) => [f.name, f.character] as const))("%s", (_, character) => {
+    const s = addMember(createRoom("r", "T", "AAAAAA", "D", "dm", 1), { id: "p", name: "P", role: "player", now: 1 });
+    const out = applyIntent(s, "p", intentSchema.parse({ type: "set_character", character }), ctx());
+    expect(out.state.seats.p.character.name).toBe(character.name);
+    expect(() => redactFor(out.state, "p")).not.toThrow();
+  });
+});
+
+describe("casting spells", () => {
+  const wizard = fixtures.find((f) => f.name === "Wizard 5")!.character;
+  const setup = (spells: { spellId: string; classId: string }[]) => {
+    let s = addMember(createRoom("r", "T", "AAAAAA", "D", "dm", 1), { id: "p", name: "P", role: "player", now: 1 });
+    s = applyIntent(s, "p", { type: "set_character", character: { ...wizard, spells } }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "approve_character", memberId: "p", approved: true }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "token_add", name: "Goblin", x: 3, y: 1, hp: 30, ac: 13 }, ctx()).state;
+    return { s, target: s.tokens.find((t) => !t.memberId)!.id };
+  };
+  const cast = (s: RoomState, spellId: string, extra: object, dice: number[] = []) => applyIntent(s, "p", intentSchema.parse({ type: "cast_spell", requestId: "c", spellId, classId: "wizard", ...extra }) as Intent, ctx(dice));
+  it("rolls a spell attack from the caster's numbers, and scales a cantrip", () => {
+    const { s, target } = setup([{ spellId: "fire-bolt", classId: "wizard" }]);
+    const out = cast(s, "fire-bolt", { targetTokenId: target }, [10, 4, 5]); // 10+7 hits AC 13; level 5 is 2d10
+    expect(out.rolls.map((r) => [r.kind, r.formula, r.result.total])).toEqual([["attack", "1d20+7", 17], ["damage", "2d10", 9]]);
+    expect(out.state.pendingDamage[0]).toMatchObject({ amount: 9, type: "fire" });
+    expect(out.state.seats.p.session.slotsUsed[0]).toBe(0);
+  });
+  it("spends a slot, and upcasts", () => {
+    const { s, target } = setup([{ spellId: "fireball", classId: "wizard" }]);
+    const dice = new Array(8).fill(3);
+    const out = cast(s, "fireball", { targetTokenId: target }, dice);
+    expect(out.state.seats.p.session.slotsUsed[2]).toBe(1);
+    expect(out.rolls[0].label).toContain("DC 15 DEX save");
+    expect(out.rolls[0].formula).toBe("8d6");
+  });
+  it("refuses an unprepared spell, a too-low slot, and an empty slot", () => {
+    const { s, target } = setup([{ spellId: "fireball", classId: "wizard" }]);
+    expect(() => cast(s, "bless", {})).toThrow(/prepared|can't/);
+    expect(() => cast(s, "fireball", { slotLevel: 2, targetTokenId: target })).toThrow(/level 3/);
+    let state = s;
+    for (let i = 0; i < 2; i++) state = cast(state, "fireball", { targetTokenId: target }, new Array(8).fill(1)).state;
+    expect(() => cast(state, "fireball", { targetTokenId: target })).toThrow(/slots left/);
+  });
+  it("starts Concentration, ending the last one", () => {
+    const { s } = setup([{ spellId: "fly", classId: "wizard" }]);
+    expect(cast(s, "fly", {}).state.seats.p.session.concentration).toBe("fly");
+  });
+  it("lets a Wizard ritual-cast from the book without a slot", () => {
+    const { s } = setup([]);
+    const ritual = (spells as unknown as { id: string; ritual: boolean; classes: string[]; level: number }[]).find((x) => x.ritual && x.classes.includes("wizard") && x.level === 1)!;
+    const out = cast(s, ritual.id, { ritual: true });
+    expect(out.state.seats.p.session.slotsUsed[0]).toBe(0);
+  });
+  it("refuses casting in armor without training", () => {
+    const { s } = setup([{ spellId: "fire-bolt", classId: "wizard" }]);
+    const armored = { ...s, seats: { ...s.seats, p: { ...s.seats.p, character: { ...s.seats.p.character, equipment: [{ itemId: "chain-mail", equipped: true }] } } } };
+    expect(() => cast(armored, "fire-bolt", {})).toThrow(/armor/);
+  });
+  it("gives Eldritch Blast its extra beams", () => {
+    const lock = fixtures.find((f) => f.name === "Warlock 11")!.character;
+    let s = addMember(createRoom("r", "T", "AAAAAA", "D", "dm", 1), { id: "p", name: "P", role: "player", now: 1 });
+    s = applyIntent(s, "p", { type: "set_character", character: { ...lock, spells: [{ spellId: "eldritch-blast", classId: "warlock" }] } }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "approve_character", memberId: "p", approved: true }, ctx()).state;
+    s = applyIntent(s, "dm", { type: "token_add", name: "Ogre", x: 5, y: 1, hp: 50, ac: 1 }, ctx()).state;
+    const out = applyIntent(s, "p", intentSchema.parse({ type: "cast_spell", requestId: "e", spellId: "eldritch-blast", classId: "warlock", targetTokenId: s.tokens.find((t) => !t.memberId)!.id }) as Intent, ctx());
+    expect(out.rolls.filter((r) => r.kind === "attack")).toHaveLength(3);
   });
 });

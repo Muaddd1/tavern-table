@@ -6,4 +6,5 @@ export * from "./turn";
 export * from "./spells";
 export * from "./validate";
 export * from "./companions";
+export * from "./turnguide";
 export { srd, withHomebrew } from "./compendium";

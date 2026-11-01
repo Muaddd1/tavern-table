@@ -39,12 +39,14 @@ export type RoomState = {
   combat: { round: number; order: Combatant[]; turn: number; effects: Effect[] } | null;
   tokens: Token[]; map: MapState;
   scene: { environment: Environment; backgroundImage?: string; music?: string; musicAudio?: string; startAt: number };
-  rollRequests: RollRequest[]; pendingDamage: PendingDamage[]; sheetChanges: SheetChange[]; handouts: Handout[];
+  rollRequests: RollRequest[]; pendingDamage: PendingDamage[]; reactions: { id: string; memberId: string; text: string; at: number }[]; sheetChanges: SheetChange[]; handouts: Handout[];
   notes: string; loot: string; xp: number; npcs: string;
   // Server-only anti-cheat counters.
   rateWindow: Record<string, number[]>; rejected: Record<string, number>; cancelled: Record<string, number>; rerollGrants: Record<string, string>;
   ai?: { summary: string; npcs: string[]; quests: string[]; locations: string[]; adventure?: string };
 };
+
+export const AI_DM_ID = "00000000-0000-0000-0000-0000000000a1";
 
 export type Roll = {
   id: string; requestId: string; memberId: string; characterLabel: string; kind: string; label: string; formula: string;
@@ -92,7 +94,10 @@ export const intentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("request_roll"), label: z.string().min(1).max(120), kind: z.enum(["skill", "save", "ability"]), key: z.string().max(60), targets: z.array(id).min(1).max(9) }).strict(),
   z.object({ type: z.literal("grant_reroll"), rollId: id, reason: z.string().max(200) }).strict(),
   z.object({ type: z.literal("attack"), requestId: id, attackId: z.string().max(100), targetTokenId: id, visibility: rollVisibility.default("public"), throwVector: z.tuple([z.number(), z.number()]).optional() }).strict(),
+  z.object({ type: z.literal("cast_spell"), requestId: id, spellId: z.string().max(80), classId: z.string().max(40), slotLevel: z.number().int().min(1).max(9).optional(), ritual: z.boolean().optional(), targetTokenId: id.optional(), visibility: rollVisibility.default("public") }).strict(),
   z.object({ type: z.literal("attack_cancelled") }).strict(),
+  z.object({ type: z.literal("monster_attack"), requestId: id, tokenId: id, targetTokenId: id, name: z.string().min(1).max(80), toHit: z.number().int().min(-5).max(40), damage: z.string().min(1).max(40), damageType: z.string().max(30), visibility: rollVisibility.default("public") }).strict(),
+  z.object({ type: z.literal("reaction_answer"), id, use: z.boolean() }).strict(),
   z.object({ type: z.literal("decide_damage"), id, apply: z.boolean() }).strict(),
   z.object({ type: z.literal("session_change"), memberId: id.optional(), change: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("damage"), amount: z.number().int().min(0).max(9999), damageType: z.string().max(30).optional() }).strict(),
@@ -124,6 +129,8 @@ export const intentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("template_remove"), id }).strict(),
   z.object({ type: z.literal("scene"), environment: z.enum(ENVIRONMENTS).optional(), music: z.string().max(60).optional(), backgroundImage: z.string().max(3_000_000).optional(), musicAudio: z.string().max(500).optional() }).strict(),
   z.object({ type: z.literal("handout"), title: z.string().min(1).max(120), body: z.string().max(10000).optional(), image: z.string().max(3_000_000).optional() }).strict(),
+  z.object({ type: z.literal("give_item"), memberId: id, name: z.string().min(1).max(80) }).strict(),
+  z.object({ type: z.literal("ai_memory"), summary: z.string().max(8000).optional(), npcs: z.array(z.string().max(200)).max(50).optional(), quests: z.array(z.string().max(200)).max(50).optional(), locations: z.array(z.string().max(200)).max(50).optional(), adventure: z.string().max(60).optional() }).strict(),
   z.object({ type: z.literal("safety_signal"), kind: z.enum(["pause", "skip"]) }).strict(),
 ]);
 export type Intent = z.infer<typeof intentSchema>;

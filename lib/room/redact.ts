@@ -38,7 +38,11 @@ export function redactFor(state: RoomState, viewerId: string): RoomView | null {
   if (!me || me.kicked) return null;
   const isDm = me.role === "dm";
   const seats = Object.values(state.seats);
-  const withSheet = (seat: SeatedCharacter) => ({ ...seat, sheet: deriveSheet(seat.character) });
+  // Feature wording is long and already in the client's data, so snapshots carry only names.
+  const withSheet = (seat: SeatedCharacter) => {
+    const sheet = deriveSheet(seat.character);
+    return { ...seat, sheet: { ...sheet, features: sheet.features.map((f) => ({ id: f.id, name: f.name, level: f.level })) } };
+  };
   const orderIds = state.combat?.order ?? [];
   const tokens = isDm ? state.tokens : visibleTo(state, viewerId);
   const { rateWindow: _a, rejected: _b, cancelled: _c, rerollGrants: _d, ai: _e, notes: _f, loot: _g, npcs: _h, sheetChanges: _i, pendingDamage: _j, rollRequests: _k, seats: _l, ...open } = state;
@@ -55,6 +59,7 @@ export function redactFor(state: RoomState, viewerId: string): RoomView | null {
     seats: seats.map((seat) => publicSeat(seat, deriveSheet(seat.character))),
     mine: state.seats[viewerId] ? withSheet(state.seats[viewerId]) : null,
     myRerolls: Object.entries(state.rerollGrants).filter(([, m]) => m === viewerId).map(([r]) => r),
+    reactions: state.reactions.filter((r) => r.memberId === viewerId),
     rollRequests: state.rollRequests.filter((r) => !r.closed && (isDm || r.targets.includes(viewerId))),
   };
   if (isDm) {

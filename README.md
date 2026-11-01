@@ -1,8 +1,16 @@
 # Tavern Table
 
-An online tabletop compatible with fifth edition, using the SRD 5.2.1 rules. "Tavern Table" is a working name. See [PLAN.md](PLAN.md) for the full design.
+An online tabletop compatible with fifth edition, using the SRD 5.2.1 rules. "Tavern Table" is a working name. See [PLAN.md](PLAN.md) for the design.
 
-**Status:** Phase 1 of 9 is done: SRD data and the rules engine. There's no playable app yet.
+## What works where
+
+| Feature | Local (`npm start`) | Deployed without keys | Needs |
+|---|---|---|---|
+| Characters, builder, sheet, level-up, share links, export | Yes | Yes | Nothing; saved in the browser |
+| 3D dice, rules reference, search, tutorial | Yes | Yes | Nothing |
+| Multiplayer rooms, map, 3D table, DM tools, anti-cheat | Yes, in memory | No | Supabase |
+| Accounts and synced characters | No | No | Supabase and login providers |
+| Import, Create with AI, Ask the rules, AI DM | No | No | A paid Anthropic API key |
 
 ## Setup
 
@@ -10,37 +18,51 @@ Needs Node 24.
 
 ```bash
 npm install
-npm test        # rules engine and data checks
-npm run dev     # placeholder page, at http://localhost:3000
+npm run dev              # or: npm run build && npm start
+npm test                 # unit and database tests
+npx playwright test      # browser tests, against `npm run build`
 ```
 
-## Rules engine
+To play multiplayer locally, open `/play` in several browsers. Rooms live in memory and vanish on restart.
 
-All game math is pure TypeScript in `lib/rules`, with no React and no I/O.
+### Turning on multiplayer
 
-| File | Covers |
+1. Create a Supabase project, on the free plan if you like.
+2. Run `supabase/migrations/*.sql` in order, in its SQL editor.
+3. Set the variables in `.env.example` on Vercel.
+4. For accounts, turn on Email, Google and Discord under Authentication.
+
+The Supabase code path is tested at the SQL level, with the real migrations in embedded Postgres, but hasn't yet run against a live Supabase project. Try a real session before relying on it.
+
+### Turning on AI
+
+Set `ANTHROPIC_API_KEY`. Every call costs money. `AI_DAILY_PER_USER` and `AI_DAILY_TOTAL` cap use, per server instance, so treat them as approximate until they move to the database.
+
+## How it fits together
+
+| Path | Covers |
 |---|---|
-| `sheet.ts` | `deriveSheet(character)`: scores, saves, skills, AC, HP, speed, attacks, spellcasting, resources, jumps, carrying |
-| `state.ts` | Session state: damage, healing, temporary HP, death saves, concentration, resources, slots, rests |
-| `conditions.ts` | Advantage and Disadvantage, automatic failures and critical hits, from the 15 conditions |
-| `turn.ts` | Per-turn limits: action, Bonus Action, Reaction, movement, one slot spell |
-| `spells.ts` | Cantrip scaling, upcasting, ritual rules |
-| `validate.ts` | Legality checks, with a DM override |
-| `companions.ts` | Mini stat blocks from the bestiary |
+| `lib/rules` | All game math, pure TypeScript |
+| `lib/room` | Room rules (`reducer.ts`), what each viewer may see (`redact.ts`), persistence (`store.ts`, `supabase-store.ts`) |
+| `lib/dice` | Notation parser, die shapes, physics replay |
+| `lib/map` | Grid, line of sight, areas of effect |
+| `lib/ai`, `app/api/ai` | AI routes. The AI acts only through tools that become room intents |
+| `lib/import` | Turns the AI's reading of a sheet into a review screen |
+| `data/srd` | SRD data, and `mechanics.ts`, which maps features to calculated effects |
 
-Every derived number is `{ value, parts }`, so tooltips come from the math: `explain()` gives "+6 = +4 Strength + +2 proficiency".
+**Anti-cheat:** clients send intents, never results. The server rolls with `crypto.randomInt`, takes modifiers from its own copy of the character, and commits the state and log in one transaction. Rolls, audits and flags are insert-only in the database, even for the service role. Only `redact.ts` decides what reaches a browser.
 
-Features are data. `data/srd/mechanics.ts` maps SRD features to effects, and homebrew uses the same format. A feature without an effect appears as text for the player and DM to apply, so not every feature is automated.
+**3D dice:** each client simulates the throw, then relabels the die so the face that lands up shows the server's number.
 
 ## SRD data
 
 ```
-data/srd/raw/          5e-database 2024 data (MIT, license alongside)
+data/srd/raw/          5e-database 2024 data (MIT, license alongside; not shipped to browsers)
 scripts/import-srd.mjs builds data/srd/*.json, with the fixes below
 scripts/audit-srd.mjs  compares the shipped data with the official PDF
 ```
 
-To re-audit, download the [SRD 5.2.1 PDF](https://media.dndbeyond.com/compendium-images/srd/5.2/SRD_CC_v5.2.1.pdf). The PDF isn't kept in this repo.
+To re-audit, download the [SRD 5.2.1 PDF](https://media.dndbeyond.com/compendium-images/srd/5.2/SRD_CC_v5.2.1.pdf), which isn't kept in this repo.
 
 ```bash
 pdftotext SRD_CC_v5.2.1.pdf srd.txt
@@ -60,15 +82,11 @@ Fixes made to the source data after comparing it with the PDF:
 | "Half-Plate Armor", "Two Weapon Fighting" | Renamed to match the PDF |
 | Words split by hyphens, API urls, hosted images | Cleaned up or removed |
 
-## Tests
+The audit compares names, AC, HP, ability scores, and spell level, school, concentration and ritual. It doesn't compare monster attack text or spell descriptions word by word.
 
-| File | Covers |
-|---|---|
-| `tests/unit/characters.test.ts` | 37 characters checked against hand-calculated numbers, plus Kael and a companion |
-| `tests/unit/rules.test.ts` | Armor, weapons, multiclassing, damage, rests, conditions, turn limits, legality |
-| `tests/unit/srd-data.test.ts` | Licensing checks on shipped data, and class tables against the PDF |
+## Audio
 
-`tests/fixtures/characters.ts` holds a homebrew Kael Ashford, as numbers only, to prove that homebrew runs through the same format as SRD content.
+All ambience and music is generated by `scripts/gen-audio.py`, and dice clicks are synthesized in the browser, so there's nothing to license. The sound is simple, and worth replacing with CC0 recordings later.
 
 ## Licensing
 

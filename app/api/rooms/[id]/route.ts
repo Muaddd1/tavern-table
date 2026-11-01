@@ -12,11 +12,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!state) return NextResponse.json({ error: "That room doesn't exist." }, { status: 404 });
   const view = redactFor(state, memberId);
   if (!view) return NextResponse.json({ error: "You're no longer in this room." }, { status: 403 });
+  await store.touch(id, memberId, new URL(req.url).searchParams.get("idle") === "1");
+  const presence = await store.presence(id);
   const rolls = (await store.rolls(id)).filter((r) => visibleRoll(r, view.me));
   const chat = (await store.chat(id)).filter((c) => visibleChat(c, view.me));
   const isDm = view.me.role === "dm";
   return NextResponse.json({
-    view, rolls: rolls.slice(-200), chat: chat.slice(-200), transport: transport(), channels: channelsFor(state, view.me),
+    view, presence, rolls: rolls.slice(-200), chat: chat.slice(-200), transport: transport(), channels: channelsFor(state, view.me),
     audits: isDm ? (await store.audits(id)).slice(-200) : undefined, flags: isDm ? (await store.flags(id)).slice(-200) : undefined,
   });
 }

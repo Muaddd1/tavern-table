@@ -6,6 +6,8 @@ import { hashToken, newId, newInviteCode, newToken } from "@/lib/room/store";
 
 const body = z.object({ roomName: z.string().trim().min(1).max(80), yourName: z.string().trim().min(1).max(40), dmMode: z.enum(["human", "ai", "assist"]).default("human") }).strict();
 
+export const GET = () => NextResponse.json({ available: roomsAvailable() });
+
 export async function POST(req: Request) {
   if (!roomsAvailable()) return NextResponse.json({ error: "Multiplayer isn't set up on this deployment yet: it needs its database." }, { status: 503 });
   const parsed = body.safeParse(await req.json().catch(() => null));

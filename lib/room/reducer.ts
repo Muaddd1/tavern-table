@@ -5,17 +5,20 @@ import { parseNotation, rollParsed, type RollResult } from "@/lib/dice/notation"
 import { distanceFeet, lineOfSight } from "@/lib/map/geometry";
 import {
   abilityCheck, addCondition, applyDamage, attackRoll, concentrate, deriveSheet, exhaustionPenalty, grantTempHp, heal, longRest, newState, removeCondition, rollDeathSave, RuleError,
-  savingThrow, shortRest, spendResource, spendSlot, validate, isLegal,
-  type Ability, type Character, type Sheet,
+  canCastAsRitual, savingThrow, shortRest, spellDamage, eldritchBlastBeams, spendResource, spendSlot, srd, validate, isLegal,
+  type Ability, type Character, type Sheet, type SpellDef,
 } from "@/lib/rules";
+import spellData from "@/data/srd/spells.json";
+import { AI_DM_ID } from "./types";
 import type { ChatMessage, Intent, Member, Outcome, Roll, RoomState, SecurityFlag, SeatedCharacter, Token, Visibility } from "./types";
 
+const SPELLS = spellData as unknown as SpellDef[];
 export type Rng = (sides: number) => number;
 export type Ctx = { rng: Rng; now: number; newId: () => string };
 
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 20;
-const DM_ONLY = new Set(["approve_character", "request_roll", "grant_reroll", "decide_damage", "decide_sheet_change", "settings", "member", "start_combat", "add_combatant", "end_combat", "add_effect", "token_add", "token_update", "token_remove", "map_set", "fog_reveal", "scene", "handout"]);
+const DM_ONLY = new Set(["approve_character", "request_roll", "grant_reroll", "decide_damage", "decide_sheet_change", "settings", "member", "start_combat", "add_combatant", "end_combat", "add_effect", "token_add", "token_update", "token_remove", "map_set", "fog_reveal", "scene", "handout", "monster_attack", "give_item", "ai_memory"]);
 export const COLORS = ["#e0803a", "#5aa9e6", "#7bc47f", "#c678dd", "#e5c07b", "#e06c75", "#56b6c2", "#d19a66", "#98c379"];
 
 const dmOf = (s: RoomState) => s.members.find((m) => m.role === "dm" && !m.kicked);
@@ -23,11 +26,14 @@ const dmOf = (s: RoomState) => s.members.find((m) => m.role === "dm" && !m.kicke
 export function createRoom(id: string, name: string, inviteCode: string, dmName: string, dmId: string, now: number, dmMode: RoomState["dmMode"] = "human"): RoomState {
   return {
     id, name, inviteCode, dmMode, maxPlayers: 8, version: 0, seq: 0, epoch: 0, paused: false, sheetsLocked: false, allowManualDice: false, autoApplyDamage: false, tone: "serious",
-    members: [{ id: dmId, name: dmName, role: dmMode === "ai" ? "player" : "dm", color: COLORS[0], diceSkin: "bone", joinedAt: now }],
+    members: [
+      { id: dmId, name: dmName, role: dmMode === "ai" ? "player" : "dm", color: COLORS[0], diceSkin: "bone", joinedAt: now },
+      ...(dmMode === "ai" ? [{ id: AI_DM_ID, name: "AI Dungeon Master", role: "dm" as const, color: "#d9b36c", diceSkin: "obsidian", joinedAt: now }] : []),
+    ],
     seats: {}, combat: null, tokens: [],
     map: { name: "Stone hall", width: 30, height: 20, walls: [], fog: false, revealed: [], dark: false, weather: "none", templates: [] },
     scene: { environment: "dungeon", startAt: now },
-    rollRequests: [], pendingDamage: [], sheetChanges: [], handouts: [], notes: "", loot: "", xp: 0, npcs: "",
+    rollRequests: [], pendingDamage: [], reactions: [], sheetChanges: [], handouts: [], notes: "", loot: "", xp: 0, npcs: "",
     rateWindow: {}, rejected: {}, cancelled: {}, rerollGrants: {},
   };
 }
@@ -102,12 +108,13 @@ export function applyIntent(state: RoomState, actorId: string, intent: Intent, c
   const actor: Member | undefined = state.members.find((m) => m.id === actorId);
   if (!actor || actor.kicked) throw new RuleError("You aren't in this room.");
   const isDm = actor.role === "dm";
+  // A signal sent during an AI game also pauses the AI's next turn, through the room's event log.
   if (DM_ONLY.has(intent.type) && !isDm) throw new RuleError("Only the DM can do that.");
   if (actor.role === "spectator" && intent.type !== "chat") throw new RuleError("Spectators can only chat.");
   if (actor.muted && intent.type === "chat") throw new RuleError("The DM has muted you.");
   if (state.paused && !isDm && !["chat", "safety_signal"].includes(intent.type)) throw new RuleError("The DM has paused the game.");
 
-  let s: RoomState = { ...state };
+  const s: RoomState = { ...state };
   const out: Outcome = { state: s, events: [], rolls: [], audits: [], flags: [], chat: [] };
   const emit = (type: string, payload: Record<string, unknown>, audience: Outcome["events"][number]["audience"] = { kind: "all" }) => out.events.push({ type, audience, payload });
   const audit = (memberId: string, field: string, before: unknown, after: unknown) => {
@@ -329,6 +336,92 @@ export function applyIntent(state: RoomState, actorId: string, intent: Intent, c
       }
       break;
     }
+    case "cast_spell": {
+      checkRate();
+      const seat = requireSeat(s, actorId);
+      const sheet = sheetFor(seat);
+      const spell = SPELLS.find((x) => x.id === intent.spellId);
+      const caster = sheet.spellcasting.classes.find((c) => c.classId === intent.classId);
+      if (!spell || !caster) throw new RuleError("You can't cast that.");
+      const known = seat.character.spells?.find((x) => x.spellId === spell.id && x.classId === intent.classId);
+      if (!known && !(intent.ritual && caster.ritualFromBook)) throw new RuleError(`${spell.name} isn't prepared.`);
+      if (sheet.armorWorn?.untrained) throw new RuleError("You can't cast spells in armor you aren't trained with.");
+      let session = seat.session;
+      let slot = 0;
+      if (spell.level > 0 && intent.ritual) {
+        if (!canCastAsRitual(spell, caster, { prepared: !!known, inSpellbook: true })) throw new RuleError(`${spell.name} can't be cast as a Ritual.`);
+        slot = spell.level;
+      } else if (spell.level > 0) {
+        slot = intent.slotLevel ?? spell.level;
+        if (slot < spell.level) throw new RuleError(`${spell.name} needs a level ${spell.level} slot or higher.`);
+        session = spendSlot(session, sheet, slot);
+      }
+      if (spell.concentration) session = concentrate(session, spell.id);
+      setSession(actorId, session);
+      audit(actorId, `cast:${spell.id}`, slot, intent.ritual ? "ritual" : "slot");
+      emit("spell.cast", { who: seat.character.name, spell: spell.name, level: slot, dc: spell.save ? caster.saveDc.value : undefined, save: spell.save, ritual: !!intent.ritual });
+      const target = intent.targetTokenId ? s.tokens.find((t) => t.id === intent.targetTokenId) : undefined;
+      const level = sheet.level;
+      const damage = spellDamage(spell, slot, level);
+      if (spell.attack) {
+        if (!target) throw new RuleError("Choose a target for that spell.");
+        const me = s.tokens.find((t) => t.memberId === actorId);
+        const beams = spell.id === "eldritch-blast" ? eldritchBlastBeams(level) : 1;
+        for (let beam = 0; beam < beams; beam++) {
+          const roll = attackRoll({ attacker: session.conditions, target: target.conditions, distanceFeet: me ? distanceFeet(me, target) : 5, ranged: spell.attack === "ranged" });
+          const modifier = sum(caster.attack.parts);
+          const toHit = rollParsed({ dice: [{ count: 1, sides: 20 }], modifier, advantage: roll.state, text: "" }, ctx.rng);
+          const face = toHit.dice.find((d) => d.kept)!.value;
+          const critical = face === 20 || (roll.autoCrit && face !== 1);
+          const hit = face !== 1 && (critical || target.ac === undefined || toHit.total >= target.ac);
+          const suffix = beam ? `:${beam}` : "";
+          commitRoll({ requestId: `${intent.requestId}${suffix}`, kind: "attack", label: `${spell.name} vs ${target.hidden ? "a target" : target.name}`, formula: `1d20${modifier >= 0 ? "+" : ""}${modifier}`, result: toHit, parts: caster.attack.parts, advantageFrom: roll.advantageFrom, disadvantageFrom: roll.disadvantageFrom, visibility: intent.visibility, source: "engine" });
+          emit("attack.rolled", { hit, critical, attacker: seat.character.name, target: target.hidden ? "a target" : target.name, name: spell.name });
+          if (hit && damage) {
+            const notation = critical ? damage.replace(/^(\d+)d/, (_, n) => `${+n * 2}d`) : damage;
+            const rolled = rollDamage(notation, ctx.rng);
+            commitRoll({ requestId: `${intent.requestId}${suffix}:damage`, kind: "damage", label: `${spell.name} damage`, formula: notation, result: rolled, parts: [], advantageFrom: [], disadvantageFrom: [], visibility: intent.visibility, source: "engine" });
+            applyOrPropose(Math.max(0, rolled.total), spell.damageType ?? "force", critical, target, spell.name);
+          }
+        }
+      } else if (damage) {
+        // A save spell's damage is rolled once and shared. Each target's save is the DM's call.
+        const rolled = rollDamage(damage, ctx.rng);
+        commitRoll({ requestId: intent.requestId, kind: "damage", label: `${spell.name} damage${spell.save ? ` (DC ${caster.saveDc.value} ${spell.save.toUpperCase()} save)` : ""}`, formula: damage, result: rolled, parts: [], advantageFrom: [], disadvantageFrom: [], visibility: intent.visibility, source: "engine" });
+        if (target) applyOrPropose(Math.max(0, rolled.total), spell.damageType ?? "force", false, target, spell.name);
+      }
+      break;
+    }
+    case "monster_attack": {
+      const token = s.tokens.find((t) => t.id === intent.tokenId);
+      const target = s.tokens.find((t) => t.id === intent.targetTokenId);
+      if (!token || !target) throw new RuleError("Choose a monster and a target on the map.");
+      const targetSeat = target.memberId ? s.seats[target.memberId] : undefined;
+      const targetAc = targetSeat ? sheetFor(targetSeat).ac.value : target.ac;
+      const roll = attackRoll({ attacker: token.conditions, target: target.conditions, distanceFeet: distanceFeet(token, target) });
+      const toHit = rollParsed({ dice: [{ count: 1, sides: 20 }], modifier: intent.toHit, advantage: roll.state, text: "" }, ctx.rng);
+      const face = toHit.dice.find((d) => d.kept)!.value;
+      const critical = face === 20 || (roll.autoCrit && face !== 1);
+      const hit = face !== 1 && (critical || targetAc === undefined || toHit.total >= targetAc);
+      const label = token.hidden ? "Something" : token.name;
+      commitRoll({ requestId: intent.requestId, kind: "attack", label: `${label}'s ${intent.name} vs ${target.name}`, formula: `1d20${intent.toHit >= 0 ? "+" : ""}${intent.toHit}`, result: toHit, parts: [{ label: intent.name, value: intent.toHit }], advantageFrom: roll.advantageFrom, disadvantageFrom: roll.disadvantageFrom, visibility: intent.visibility, source: "engine" });
+      emit("attack.rolled", { hit, critical, attacker: label, target: target.name, name: intent.name });
+      if (target.memberId) promptReaction(target.memberId, hit ? `${label} hit you with ${intent.name}. Use your Reaction?` : `${label} missed you with ${intent.name}. Use your Reaction?`);
+      if (hit) {
+        const doubled = critical ? intent.damage.replace(/^(\d+)d/, (_, n) => `${+n * 2}d`) : intent.damage;
+        const damage = rollDamage(doubled, ctx.rng);
+        commitRoll({ requestId: `${intent.requestId}:damage`, kind: "damage", label: `${intent.name} damage${critical ? " (critical)" : ""}`, formula: doubled, result: damage, parts: [], advantageFrom: [], disadvantageFrom: [], visibility: intent.visibility, source: "engine" });
+        dealDamage(target, Math.max(0, damage.total), intent.damageType, critical, intent.name);
+      }
+      break;
+    }
+    case "reaction_answer": {
+      const prompt = s.reactions.find((r) => r.id === intent.id);
+      if (!prompt || prompt.memberId !== actorId) throw new RuleError("That prompt has passed.");
+      s.reactions = s.reactions.filter((r) => r.id !== intent.id);
+      if (intent.use) emit("reaction.used", { memberId: actorId, name: s.seats[actorId]?.character.name ?? actor.name, text: prompt.text });
+      break;
+    }
     case "attack_cancelled": {
       const n = (s.cancelled[actorId] ?? 0) + 1;
       s.cancelled = { ...s.cancelled, [actorId]: n };
@@ -509,6 +602,15 @@ export function applyIntent(state: RoomState, actorId: string, intent: Intent, c
         if (seat.session.conditions.some((c) => ["grappled", "restrained", "paralyzed", "petrified", "unconscious"].includes(c))) throw new RuleError("Your Speed is 0.");
       }
       s.tokens = s.tokens.map((x) => (x.id === t.id ? { ...x, x: intent.x, y: intent.y } : x));
+      if (s.combat) {
+        // Leaving an enemy's reach offers it an Opportunity Attack.
+        const enemyOf = (a: Token, b: Token) => !!a.memberId !== !!b.memberId;
+        for (const other of s.tokens.filter((o) => o.id !== t.id && enemyOf(o, t) && distanceFeet(o, t) <= 5 && distanceFeet(o, intent) > 5)) {
+          const text = `${t.hidden ? "Something" : t.name} is leaving ${other.name}'s reach. Opportunity Attack?`;
+          if (other.memberId) promptReaction(other.memberId, text);
+          else for (const dm of s.members.filter((m) => m.role === "dm")) promptReaction(dm.id, text);
+        }
+      }
       emit("map.changed", {});
       break;
     }
@@ -552,6 +654,23 @@ export function applyIntent(state: RoomState, actorId: string, intent: Intent, c
       emit("handout.shown", { id: h.id, title: h.title });
       break;
     }
+    case "give_item": {
+      const seat = s.seats[intent.memberId];
+      if (!seat) throw new RuleError("That player has no character.");
+      const known = [...srd.items.values()].find((i) => i.name.toLowerCase() === intent.name.toLowerCase());
+      const itemId = known?.id ?? `gift-${intent.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+      const homebrew = known ? seat.character.homebrew : { ...seat.character.homebrew, items: [...(seat.character.homebrew?.items ?? []), { id: itemId, name: intent.name }] };
+      s.seats = { ...s.seats, [intent.memberId]: { ...seat, character: { ...seat.character, homebrew, equipment: [...seat.character.equipment, { itemId, equipped: false }] } } };
+      audit(intent.memberId, `item:${intent.name}`, null, "given by the DM");
+      emit("character.changed", { memberId: intent.memberId });
+      break;
+    }
+    case "ai_memory": {
+      const { type: _t, ...patch } = intent;
+      void _t;
+      s.ai = { summary: "", npcs: [], quests: [], locations: [], ...s.ai, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) };
+      break;
+    }
     case "safety_signal": {
       // Anonymous on purpose: the DM learns the table needs a pause, not who asked.
       emit("safety.signal", { kind: intent.kind }, { kind: "dm" });
@@ -562,6 +681,13 @@ export function applyIntent(state: RoomState, actorId: string, intent: Intent, c
   out.state = s;
   return out;
 
+  function promptReaction(memberId: string, text: string) {
+    const seat = s.seats[memberId];
+    if (seat && (seat.session.hp === 0 || seat.session.conditions.some((c) => ["incapacitated", "stunned", "paralyzed", "unconscious", "petrified"].includes(c)))) return;
+    const p = { id: ctx.newId(), memberId, text, at: ctx.now };
+    s.reactions = [...s.reactions.filter((r) => ctx.now - r.at < 60_000), p];
+    emit("reaction.prompt", p, { kind: "members", ids: [memberId] });
+  }
   function lookupRollOwner(rollId: string): string {
     const owner = (ctx as Ctx & { rollOwner?: (id: string) => string | undefined }).rollOwner?.(rollId);
     if (!owner) throw new RuleError("That roll isn't in this room's log.");

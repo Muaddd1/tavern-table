@@ -3,7 +3,6 @@ import { authenticate, getStore, visibleEvents } from "@/lib/room/server";
 import { hashToken, roomBus } from "@/lib/room/store";
 import type { RoomEvent } from "@/lib/room/types";
 
-export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

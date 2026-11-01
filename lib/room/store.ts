@@ -23,10 +23,12 @@ export type RoomStore = {
   flags(id: string): Promise<SecurityFlag[]>;
   logFlag(id: string, flag: SecurityFlag): Promise<void>;
   publish(state: RoomState, events: RoomEvent[]): Promise<void>;
+  touch(id: string, memberId: string, idle: boolean): Promise<void>;
+  presence(id: string): Promise<Record<string, { at: number; idle: boolean }>>;
 };
 
 // --- Memory store. Rolls, audits and flags are append-only here too: there's no way to edit them.
-type MemoryRoom = { state: RoomState; events: RoomEvent[]; rolls: Roll[]; audits: SheetAudit[]; flags: SecurityFlag[]; chat: ChatMessage[]; tokens: Map<string, string> };
+type MemoryRoom = { state: RoomState; events: RoomEvent[]; rolls: Roll[]; audits: SheetAudit[]; flags: SecurityFlag[]; chat: ChatMessage[]; tokens: Map<string, string>; presence: Map<string, { at: number; idle: boolean }> };
 const g = globalThis as unknown as { __rooms?: Map<string, MemoryRoom>; __roomBus?: EventEmitter };
 const rooms = (g.__rooms ??= new Map<string, MemoryRoom>());
 export const roomBus = (g.__roomBus ??= Object.assign(new EventEmitter(), {}).setMaxListeners(0));
@@ -37,7 +39,7 @@ const room = (id: string) => {
   return r;
 };
 export const memoryStore: RoomStore = {
-  async create(state) { rooms.set(state.id, { state, events: [], rolls: [], audits: [], flags: [], chat: [], tokens: new Map() }); },
+  async create(state) { rooms.set(state.id, { state, events: [], rolls: [], audits: [], flags: [], chat: [], tokens: new Map(), presence: new Map() }); },
   async load(id) { return rooms.get(id)?.state ?? null; },
   async findByCode(code) { for (const r of rooms.values()) if (r.state.inviteCode === code) return r.state.id; return null; },
   async commit(id, c) {
@@ -57,6 +59,8 @@ export const memoryStore: RoomStore = {
   async flags(id) { return [...room(id).flags]; },
   async logFlag(id, flag) { room(id).flags.push(flag); },
   async publish(state, events) { roomBus.emit(`room:${state.id}`, events); },
+  async touch(id, memberId, idle) { room(id).presence.set(memberId, { at: Date.now(), idle }); },
+  async presence(id) { return Object.fromEntries(room(id).presence); },
 };
 
 export const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -83,7 +87,7 @@ export async function handleIntent(store: RoomStore, roomId: string, memberId: s
   if (intent.type === "grant_reroll") { const o = await store.rollOwner(roomId, intent.rollId); if (o) owners.set(intent.rollId, o); }
   for (let attempt = 0; attempt < 6; attempt++) {
     // Same request id again: hand back the original roll and roll nothing new.
-    if ((intent.type === "roll" || intent.type === "manual_roll" || intent.type === "attack")) {
+    if (intent.type === "roll" || intent.type === "manual_roll" || intent.type === "attack" || intent.type === "cast_spell" || intent.type === "monster_attack") {
       const original = await store.findRoll(roomId, intent.requestId, memberId);
       if (original) {
         await rejected(store, roomId, memberId, "replayed-roll", `Request ${intent.requestId} was sent again; no new dice were rolled.`);

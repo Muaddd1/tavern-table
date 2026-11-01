@@ -11,6 +11,8 @@ create table room_members (
   room_id uuid not null references rooms on delete restrict,
   member_id uuid not null,
   token_hash text not null unique,
+  last_seen timestamptz,
+  idle boolean not null default false,
   primary key (room_id, member_id)
 );
 create table room_events (
