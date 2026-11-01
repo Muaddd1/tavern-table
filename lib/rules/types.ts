@@ -126,6 +126,14 @@ export type Character = {
   hpRolls?: number[];
   companions?: Companion[];
   homebrew?: HomebrewPack;
+  spells?: { spellId: string; classId: string; prepared?: boolean }[];
+  customFeatures?: Feature[];
+  customAttacks?: { id: string; name: string; toHit: number; damage: string; damageType: string }[];
+  details?: CharacterDetails;
+};
+export type CharacterDetails = {
+  pronouns?: string; age?: string; height?: string; appearance?: string; alignment?: string; traits?: string; ideals?: string; bonds?: string; flaws?: string;
+  backstory?: string; languages?: string; allies?: string; notes?: string; intro?: string; themeColor?: string; diceSkin?: string; portrait?: string; tokenSize?: number;
 };
 
 export type AdvantageState = "advantage" | "disadvantage" | "normal";

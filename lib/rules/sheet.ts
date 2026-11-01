@@ -55,6 +55,7 @@ function collectFeatures(c: Character, comp: Compendium): Owned[] {
     if (!feat) throw new Error(`Unknown feat ${f.featId}`);
     add({ id: feat.id, name: feat.name, level: 1, description: feat.description, effects: feat.effects }, level);
   }
+  for (const f of c.customFeatures ?? []) add(f, level);
   return owned;
 }
 
@@ -287,6 +288,13 @@ export function deriveSheet(c: Character, base: Compendium = srd): Sheet {
     critDamage: formatDamage(martialActive ? doubleDice(unarmedDamage) : "2", unarmedBonus.value), damageType: "bludgeoning",
     ability: unarmedAbility, proficient: true, properties: [], critMin, disadvantageFrom: [],
   });
+
+  for (const a of c.customAttacks ?? []) {
+    attacks.push({
+      id: a.id, name: a.name, toHit: explained([{ label: "custom attack", value: a.toHit }]), dice: a.damage, damageBonus: explained([]), damage: a.damage,
+      critDamage: doubleDice(a.damage), damageType: a.damageType, ability: "str", proficient: true, properties: [], critMin, disadvantageFrom: [],
+    });
+  }
 
   // Spellcasting
   const casters = c.classes.map((e) => ({ entry: e, def: comp.classes.get(e.classId)! })).filter((x) => x.def.caster);
