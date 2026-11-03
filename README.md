@@ -4,13 +4,15 @@ An online tabletop compatible with fifth edition, using the SRD 5.2.1 rules. "Ta
 
 ## What works where
 
-| Feature | Local (`npm start`) | Deployed without keys | Needs |
-|---|---|---|---|
-| Characters, builder, sheet, level-up, share links, export | Yes | Yes | Nothing; saved in the browser |
-| 3D dice, rules reference, search, tutorial | Yes | Yes | Nothing |
-| Multiplayer rooms, map, 3D table, DM tools, anti-cheat | Yes, in memory | No | Supabase |
-| Accounts and synced characters | No | No | Supabase and login providers |
-| Import, Create with AI, Ask the rules, AI DM | No | No | A paid Anthropic API key |
+Live at https://tavern-table-liart.vercel.app
+
+| Feature | Status | Needs |
+|---|---|---|
+| Characters, builder, sheet, level-up, share links, export | Live | Nothing; saved in the browser |
+| 3D dice, rules reference, search, tutorial | Live | Nothing |
+| Multiplayer rooms, map, 3D table, DM tools, anti-cheat | Live | Supabase (connected) |
+| Accounts and synced characters | Code live, sign-in untested | Supabase Auth settings: Site URL, Google and Discord |
+| Import, Create with AI, Ask the rules, AI DM | Off | A paid Anthropic API key |
 
 ## Setup
 
@@ -25,14 +27,14 @@ npx playwright test      # browser tests, against `npm run build`
 
 To play multiplayer locally, open `/play` in several browsers. Rooms live in memory and vanish on restart.
 
-### Turning on multiplayer
+### Turning on multiplayer on a new deployment
 
-1. Create a Supabase project, on the free plan if you like.
-2. Run `supabase/migrations/*.sql` in order, in its SQL editor.
-3. Set the variables in `.env.example` on Vercel.
-4. For accounts, turn on Email, Google and Discord under Authentication.
+1. Connect Supabase, for example with `vercel integration add supabase`, then `vercel env pull .env.local`.
+2. Run `node --env-file=.env.local scripts/migrate.mjs`.
+3. Add `ROOM_CHANNEL_SECRET` on Vercel, set to any long random string, and redeploy.
+4. Check it: `E2E_BASE=https://your-site npx playwright test tests/e2e/room.spec.ts tests/e2e/realtime.spec.ts`, then `node --env-file=.env.local scripts/check-live-db.mjs`.
 
-The Supabase code path is tested at the SQL level, with the real migrations in embedded Postgres, but hasn't yet run against a live Supabase project. Try a real session before relying on it.
+Live tests leave rooms behind, since logged rolls can't be deleted by design.
 
 ### Turning on AI
 

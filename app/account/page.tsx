@@ -11,6 +11,12 @@ export default function Account() {
   const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
+  const [providers, setProviders] = useState<{ email?: boolean; google?: boolean; discord?: boolean }>({});
+  // Offer only the sign-in methods that are switched on for this project.
+  useEffect(() => {
+    if (!url || !key) return;
+    fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } }).then((r) => r.json()).then((b) => setProviders(b.external ?? {})).catch(() => undefined);
+  }, [url, key]);
   useEffect(() => {
     if (!client) return;
     client.auth.getSession().then(({ data }) => setSession(data.session));
@@ -39,13 +45,13 @@ export default function Account() {
       <h1 className="font-display text-2xl text-gold">Account</h1>
       {!session ? (
         <Panel title="Sign in">
-          <form className="space-y-2" onSubmit={async (e) => { e.preventDefault(); const { error } = await client.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } }); setNote(error ? error.message : "Check your email for a sign-in link."); }}>
+          {providers.email && <form className="space-y-2" onSubmit={async (e) => { e.preventDefault(); const { error } = await client.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } }); setNote(error ? error.message : "Check your email for a sign-in link."); }}>
             <Field label="Email"><input type="email" autoComplete="email" required className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
             <Button type="submit" variant="primary">Email me a link</Button>
-          </form>
+          </form>}
           <div className="mt-3 flex gap-2">
-            <Button onClick={() => client.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.href } })}>Google</Button>
-            <Button onClick={() => client.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: location.href } })}>Discord</Button>
+            {providers.google && <Button onClick={() => client.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.href } })}>Google</Button>}
+            {providers.discord && <Button onClick={() => client.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: location.href } })}>Discord</Button>}
           </div>
         </Panel>
       ) : (
