@@ -2,6 +2,36 @@
 
 An online tabletop compatible with fifth edition, using the SRD 5.2.1 rules. "Tavern Table" is a working name. See [PLAN.md](PLAN.md) for the design.
 
+## Screenshots
+
+These are from a local copy of the app, using made-up players.
+
+**A table in progress, as the DM sees it.** The party panel shows who's online, with initiative below it and the live roll feed on the right.
+
+![The DM's view: party panel, initiative order, battle map with tokens, and the live roll feed](docs/screenshots/dm-table.png)
+
+**The 3D table**, with the battle map on it and dice rolling across it.
+
+![A 3D wooden table in a warmly lit room, with the battle map on top and dice on it](docs/screenshots/table.png)
+
+**3D dice.** The server rolls, and each die is relabeled so the face that lands up shows the server's number.
+
+![Bone-colored dice settled on the page, with the same numbers in the roll log](docs/screenshots/dice.png)
+
+| The DM's roll feed | On a phone |
+|---|---|
+| ![Roll feed listing each player, the dice, each modifier and its source](docs/screenshots/dm-feed.png) | ![A player's sheet on a phone, with the What can I do this turn list open](docs/screenshots/phone.png) |
+
+**The character builder and sheet.** Hover over or focus any number on the sheet to see its math.
+
+![Step-by-step builder, showing the class choice with a difficulty tag for each class](docs/screenshots/builder.png)
+
+![Character sheet with combat numbers, attacks, abilities, saves and skills](docs/screenshots/sheet.png)
+
+**The rules reference**, with plain words beside the official wording.
+
+![A rules entry for the Prone condition, in plain words and in the official wording](docs/screenshots/rules.png)
+
 ## What works where
 
 Live at https://tavern-table-liart.vercel.app
@@ -23,6 +53,7 @@ npm install
 npm run dev              # or: npm run build && npm start
 npm test                 # unit and database tests
 npx playwright test      # browser tests, against `npm run build`
+README_SHOTS=1 npx playwright test tests/e2e/readme-screenshots.spec.ts   # retake the screenshots
 ```
 
 To play multiplayer locally, open `/play` in several browsers. Rooms live in memory and vanish on restart.
