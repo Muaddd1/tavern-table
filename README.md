@@ -46,7 +46,7 @@ Live at https://tavern-table-liart.vercel.app
 
 ## Setup
 
-Needs Node 24.
+Needs Node 24 (22.12+ also works; see `engines` in package.json).
 
 ```bash
 npm install
