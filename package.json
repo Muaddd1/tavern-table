@@ -23,6 +23,9 @@
     "supabase",
     "multiplayer"
   ],
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
