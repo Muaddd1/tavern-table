@@ -2,6 +2,27 @@
   "name": "tavern-table",
   "version": "0.1.0",
   "private": true,
+  "description": "Online tabletop for fifth edition (SRD 5.2.1): character builder, 3D dice, rules lookup and live multiplayer tables",
+  "homepage": "https://tavern-table-liart.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Muaddd1/tavern-table.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Muaddd1/tavern-table/issues"
+  },
+  "author": "Mouad Sehli (https://muad-portfolio.vercel.app)",
+  "keywords": [
+    "tabletop",
+    "5e",
+    "srd",
+    "dice",
+    "nextjs",
+    "react",
+    "three.js",
+    "supabase",
+    "multiplayer"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
