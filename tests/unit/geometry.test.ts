@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { distanceFeet, lineOfSight, segmentsCross, templateCells, type Wall } from "@/lib/map/geometry";
+import { distanceFeet, lineOfSight, segmentsCross, templateCells, visibilityPolygon, type Wall } from "@/lib/map/geometry";
 
 describe("grid distance", () => {
   it("counts a diagonal step like a straight one (5 ft per square)", () => {
@@ -57,5 +57,22 @@ describe("area templates", () => {
 
   it("never returns squares outside the grid", () => {
     expect(cells({ shape: "sphere", center: { x: 0.5, y: 0.5 }, radiusFeet: 5 }, 1, 1)).toEqual(["0,0"]);
+  });
+});
+
+describe("visibility polygon", () => {
+  const o = { x: 0, y: 0 };
+
+  it("with no walls, every ray reaches the light radius", () => {
+    const poly = visibilityPolygon(o, [], 3);
+    expect(poly.length).toBeGreaterThanOrEqual(48);
+    for (const p of poly) expect(Math.hypot(p.x, p.y)).toBeCloseTo(3);
+  });
+
+  it("stops at a wall in front and ignores an open door", () => {
+    const wall: Wall = { a: { x: 2, y: -5 }, b: { x: 2, y: 5 } };
+    const ahead = (poly: { x: number; y: number }[]) => poly.reduce((best, p) => (Math.abs(Math.atan2(p.y, p.x)) < Math.abs(Math.atan2(best.y, best.x)) ? p : best));
+    expect(ahead(visibilityPolygon(o, [wall], 10)).x).toBeCloseTo(2);
+    expect(ahead(visibilityPolygon(o, [{ ...wall, door: true, open: true }], 10)).x).toBeCloseTo(10);
   });
 });
