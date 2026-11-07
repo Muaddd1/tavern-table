@@ -1,6 +1,7 @@
 // Expected values are from the SRD 5.2.1 class tables, worked out by hand.
 import { describe, expect, it } from "vitest";
-import { applyLevelUp, levelGains } from "@/lib/rules/levelup";
+import { deriveSheet } from "@/lib/rules";
+import { applyLevelUp, levelGains, sheetAsText } from "@/lib/rules/levelup";
 import { fixtures } from "../fixtures/characters";
 
 const char = (name: string) => fixtures.find((f) => f.name === name)!.character;
@@ -57,5 +58,16 @@ describe("applyLevelUp", () => {
     const c = char("Fighter 5");
     const feat = { featId: "alert" } as (typeof c.feats)[number];
     expect(applyLevelUp(c, "fighter", { feat }).feats).toEqual([...c.feats, feat]);
+  });
+});
+
+describe("sheetAsText", () => {
+  it("summarises Fighter 1 with the same numbers as the fixture (AC 17, HP 12, Init +1, Passive 13)", () => {
+    const c = char("Fighter 1");
+    const text = sheetAsText(c, deriveSheet(c));
+    expect(text).toContain("level 1");
+    expect(text).toContain("AC 17, HP 12, Speed 30 ft., Initiative 1, Passive Perception 13");
+    expect(text).toMatch(/Attacks: .*\+5, 2d6\+3/);
+    expect(text).not.toContain("Backstory:");
   });
 });
