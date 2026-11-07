@@ -1,6 +1,6 @@
 // SRD 5.2.1 conditions: what each one brings with it, and which set Speed to 0.
 import { describe, expect, it } from "vitest";
-import { expandConditions, speedIsZero } from "@/lib/rules/conditions";
+import { expandConditions, resolve, speedIsZero } from "@/lib/rules/conditions";
 
 describe("expandConditions", () => {
   it("Unconscious brings Incapacitated and Prone with it", () => {
@@ -30,5 +30,18 @@ describe("speedIsZero", () => {
   it("is false for Prone, Stunned, Frightened or no condition (Prone halves movement by crawling, it doesn't stop it)", () => {
     for (const c of ["prone", "stunned", "frightened"]) expect(speedIsZero([c])).toBe(false);
     expect(speedIsZero([])).toBe(false);
+  });
+});
+
+describe("resolve (advantage and disadvantage)", () => {
+  it("any advantage plus any disadvantage is a normal roll, however many of each", () => {
+    expect(resolve(["Help", "Hidden", "Reckless"], ["Prone"]).state).toBe("normal");
+    expect(resolve(["Help"], ["Prone", "Poisoned"]).state).toBe("normal");
+  });
+
+  it("only one side gives advantage or disadvantage, and keeps the sources for the log", () => {
+    expect(resolve(["Help", "Hidden"], [])).toEqual({ state: "advantage", advantageFrom: ["Help", "Hidden"], disadvantageFrom: [] });
+    expect(resolve([], ["Poisoned"]).state).toBe("disadvantage");
+    expect(resolve([], []).state).toBe("normal");
   });
 });
