@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   abilityCheck, addCondition, applyDamage, attackRoll, canCastAsRitual, castSlotSpell, concentrate, currentSpeed, deriveSheet, exhaustionPenalty, explain, grantExtraAction,
   grantTempHp, heal, isIncapacitated, isLegal, isStandardArray, longRest, makeAttack, move, newState, pointBuyTotal, proficiencyBonus, removeCondition, rollDeathSave, RuleError,
-  savingThrow, shortRest, spendHitDie, standUp, startTurn, takeAttackAction, spendAction, spendBonusAction, spendReaction, spendResource, spendSlot, validate,
+  savingThrow, shortRest, spendHitDie, standUp, startTurn, takeAttackAction, spendAction, spendBonusAction, spendObjectInteraction, spendReaction, spendResource, spendSlot, validate,
   type Character, type SpellDef,
 } from "@/lib/rules";
 import { fixtures, kael } from "../fixtures/characters";
@@ -416,6 +416,11 @@ describe("turn limits", () => {
     let t = takeAttackAction(startTurn(sheet, fresh), sheet);
     t = makeAttack(makeAttack(t));
     expect(() => makeAttack(t)).toThrow(/No attacks left/);
+  });
+  it("allows one free object interaction", () => {
+    const t = spendObjectInteraction(startTurn(sheet, fresh));
+    expect(t.objectInteractions).toBe(0);
+    expect(() => spendObjectInteraction(t)).toThrow(/No free object interaction/);
   });
   it("grants one more action with Action Surge", () => {
     expect(spendAction(spendAction(grantExtraAction(startTurn(sheet, fresh)))).actions).toBe(0);
