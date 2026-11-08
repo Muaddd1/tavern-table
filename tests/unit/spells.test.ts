@@ -1,6 +1,8 @@
 // SRD 5.2.1: damage cantrips gain a die at character levels 5, 11 and 17.
 import { describe, expect, it } from "vitest";
-import { cantripDiceCount, spellDamage } from "@/lib/rules/spells";
+import { deriveSheet } from "@/lib/rules";
+import { cantripDiceCount, spellCasterFor, spellDamage } from "@/lib/rules/spells";
+import { fixtures } from "../fixtures/characters";
 import type { SpellDef } from "@/lib/rules/types";
 
 describe("cantripDiceCount", () => {
@@ -29,5 +31,19 @@ describe("spellDamage edge cases", () => {
     expect(spellDamage(def({ damage: "2d6", upcastDice: "1d8" }), 4, 9)).toBe("2d6");
     expect(spellDamage(def({ level: 3, damage: "8d6", upcastDice: "1d6" }), 3, 9)).toBe("8d6");
     expect(spellDamage(def({ level: 3, damage: "8d6", upcastDice: "1d6" }), 2, 9)).toBe("8d6");
+  });
+});
+
+describe("spellCasterFor", () => {
+  const sheet = (name: string) => deriveSheet(fixtures.find((f) => f.name === name)!.character);
+
+  it("finds the class's spellcasting entry, with Wizards able to cast rituals from the book", () => {
+    expect(spellCasterFor(sheet("Wizard 1"), "wizard")).toMatchObject({ classId: "wizard", ability: "int", ritualFromBook: true });
+    expect(spellCasterFor(sheet("Cleric 1"), "cleric")).toMatchObject({ classId: "cleric", ability: "wis", ritualFromBook: false });
+  });
+
+  it("is undefined for a class the character doesn't cast with", () => {
+    expect(spellCasterFor(sheet("Cleric 1"), "wizard")).toBeUndefined();
+    expect(spellCasterFor(sheet("Fighter 1"), "fighter")).toBeUndefined();
   });
 });
